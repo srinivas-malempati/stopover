@@ -1258,7 +1258,7 @@ function go(){
   var extraOpts='';
   if(S.gems) extraOpts+='Prefer hidden local gems over tourist traps. Mark hidden gems with hiddenGem:true.\n';
   if(S.parking) extraOpts+='Add parkingTip to each activity with best nearby parking or transit tip.\n';
-  if(S.days>1) extraOpts+='Mark overnight stopovers with overnightStop:true, add suggestedStay with type/name/pricePerNight/bookingTip in '+destCurrency+'. Never mark start/end as overnight.\n';
+  if(S.days>1) extraOpts+='OVERNIGHT STAYS: For a '+S.days+'-day trip with multiple stopovers, you MUST mark the correct number of overnight stops. Rule: mark (days-1) stopovers as overnightStop:true, spread evenly across the route. Each needs suggestedStay with type, name, pricePerNight (real local price in '+destCurrency+'), bookingTip. Never mark start or end city as overnight.\n';
 
   var prompt='Expert road trip planner. Route: '+S.from+' → '+S.to+'. Days: '+S.days+'.'+
     (vibeInstructions?'\nVibe:'+vibeInstructions.replace(/\n/g,' '):'')+
@@ -1361,8 +1361,10 @@ function showResults(data){
       stop.activities.forEach(function(a){ stopCost+=Math.min(a.cost||0, 50000); });
     }
     // Add overnight stay cost for stopovers
-    if(stop.type==='stopover'&&stop.overnightStop&&stop.suggestedStay&&stop.suggestedStay.pricePerNight){
-      stopCost+=Math.min(stop.suggestedStay.pricePerNight||0,5000);
+    if(stop.type==='stopover'){
+      if(stop.overnightStop&&stop.suggestedStay&&stop.suggestedStay.pricePerNight){
+        stopCost+=Math.min(stop.suggestedStay.pricePerNight||0,5000);
+      }
     }
     stopCost=Math.min(stopCost,60000);
     stop.totalCostPerPerson=stopCost;
@@ -1511,7 +1513,14 @@ function showResults(data){
 
 
     // Overnight stay suggestion
-    if(S.days>1 && stop.overnightStop && stop.suggestedStay && stop.type!=='start' && stop.type!=='end'){
+    // Show hotel if: multi-day trip AND stopover AND (AI marked it OR it's the last stopover before end)
+    var isLastStopover=(stop.type==='stopover'&&(function(){
+      var lastSO=null;
+      for(var si=0;si<_stopsData.length;si++){if(_stopsData[si].type==='stopover')lastSO=_stopsData[si];}
+      return lastSO===stop;
+    })());
+    var showHotel=S.days>1 && stop.type==='stopover' && (stop.overnightStop || isLastStopover);
+    if(showHotel && stop.suggestedStay){
       var st=stop.suggestedStay;
       var stIco={'Hotel':'🏨','Motel':'🛖','Airbnb':'🏠','Hostel':'🛏️','Campground':'⛺'}[st.type]||'🏨';
       html+='<div class="stay-card">'+
