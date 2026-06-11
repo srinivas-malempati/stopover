@@ -248,6 +248,11 @@ html{overflow-x:hidden;}
 .wf-day span{display:block;font-size:9px;color:#075985;font-weight:700;}
 .wf-day i{display:block;font-size:13px;font-style:normal;}
 .wf-day b{display:block;font-size:10px;font-weight:800;color:#0c4a6e;}
+
+/* ── PDF EXPORT BUTTON ── */
+.export-btn{width:100%;background:var(--bg2);border:1.5px solid var(--border2);color:var(--text2);border-radius:var(--r);padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans);transition:all 0.2s;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:6px;}
+.export-btn:hover{border-color:var(--sky);color:var(--sky);}
+.export-btn:disabled{opacity:0.5;cursor:not-allowed;}
 </style>
 
 </head>
@@ -1556,6 +1561,7 @@ function showResults(data){
       '<div class="sum-item"><span class="sum-n">'+(data.bestSeason||'Year round')+'</span><span class="sum-l">Best time</span></div>'+
     '</div>'+
     '<button class="share-btn" onclick="share()">📤 Share this route</button>'+
+    '<button class="export-btn" id="export-btn" onclick="exportPDF()">📄 Export as PDF</button>'+
     '<button class="back-btn" onclick="reset()">← Plan another route</button>'+
   '</div>';
 
@@ -1654,6 +1660,137 @@ function reset(){
   var ls1=document.getElementById('ls1');
   if(ls1) ls1.classList.add('active');
   window.scrollTo(0,0);
+}
+</script>
+
+
+<!-- PDF Export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+function exportPDF(){
+  var btn=document.getElementById('export-btn');
+  if(btn){btn.disabled=true;btn.innerHTML='⏳ Generating PDF…';}
+
+  var hideSelectors=['.skip-btn','.swap-btn','.hdr-tag','#export-btn','.share-btn','.back-btn','.weather-extra'];
+  var hidden=[];
+  hideSelectors.forEach(function(sel){
+    document.querySelectorAll(sel).forEach(function(el){
+      if(el.style.display!=='none'){hidden.push({el:el,prev:el.style.display});el.style.display='none';}
+    });
+  });
+
+  var results=document.getElementById('results');
+  var targetRect=results.getBoundingClientRect();
+  var origBg=results.style.background;
+  results.style.background='#fff8f0';
+
+  // Collect safe break points BEFORE capture
+  var scrollY=window.scrollY;
+  var resultsTop=results.getBoundingClientRect().top+scrollY;
+  var breakYs=[];
+  results.querySelectorAll('.stop-card,.drive-connector').forEach(function(el){
+    var top=el.getBoundingClientRect().top+scrollY-resultsTop;
+    if(top>10) breakYs.push(top);
+  });
+  results.querySelectorAll('.act,.stay-card').forEach(function(el){
+    var bot=el.getBoundingClientRect().bottom+scrollY-resultsTop;
+    if(bot>10) breakYs.push(bot);
+  });
+  breakYs.sort(function(a,b){return a-b;});
+
+  html2canvas(results,{
+    scale:2,
+    useCORS:true,
+    backgroundColor:'#fff8f0',
+    logging:false,
+    width:results.scrollWidth,
+    height:results.scrollHeight,
+    windowWidth:results.scrollWidth,
+    windowHeight:results.scrollHeight,
+    scrollX:0,
+    scrollY:-scrollY
+  }).then(function(canvas){
+    hidden.forEach(function(h){h.el.style.display=h.prev;});
+    results.style.background=origBg;
+
+    var pdf=new jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    var pageW=pdf.internal.pageSize.getWidth();
+    var pageH=pdf.internal.pageSize.getHeight();
+    var margin=10;
+    var headerH=9;
+    var footerH=7;
+    var contentW=pageW-(margin*2);
+    var canvasScale=2;
+    var mmPerCanvasPx=contentW/canvas.width;
+    var pageContentMm=pageH-headerH-margin-footerH;
+    var pageContentPx=pageContentMm/mmPerCanvasPx;
+
+    // Build page slices using safe break points
+    var slices=[];
+    var startPx=0;
+    var totalPx=canvas.height;
+
+    while(startPx<totalPx){
+      var idealEndPx=startPx+pageContentPx;
+      if(idealEndPx>=totalPx){slices.push({s:startPx,e:totalPx});break;}
+      var minPx=startPx+(pageContentPx*0.3);
+      var bestPx=idealEndPx;
+      for(var bi=0;bi<breakYs.length;bi++){
+        var bCanvasPx=breakYs[bi]*canvasScale;
+        if(bCanvasPx>minPx&&bCanvasPx<=idealEndPx) bestPx=bCanvasPx;
+      }
+      slices.push({s:startPx,e:bestPx});
+      startPx=bestPx;
+    }
+
+    var totalPages=slices.length;
+
+    function drawHeader(p){
+      pdf.setFillColor(255,124,42);
+      pdf.rect(0,0,pageW,headerH,'F');
+      pdf.setTextColor(255,255,255);
+      pdf.setFontSize(8);
+      pdf.setFont('helvetica','bold');
+      pdf.text('STOPOVER  '+S.from.toUpperCase()+' to '+S.to.toUpperCase(),margin,6.2);
+      pdf.text('Page '+p+' of '+totalPages,pageW-margin,6.2,{align:'right'});
+      pdf.setTextColor(0,0,0);
+    }
+
+    for(var p=0;p<slices.length;p++){
+      if(p>0) pdf.addPage();
+      drawHeader(p+1);
+      var sl=slices[p];
+      var slHpx=Math.ceil(sl.e-sl.s);
+      if(slHpx<=0) continue;
+      var tmp=document.createElement('canvas');
+      tmp.width=canvas.width;
+      tmp.height=slHpx;
+      var ctx=tmp.getContext('2d');
+      ctx.fillStyle='#fff8f0';
+      ctx.fillRect(0,0,tmp.width,tmp.height);
+      ctx.drawImage(canvas,0,-sl.s);
+      var slHmm=slHpx*mmPerCanvasPx;
+      pdf.addImage(tmp.toDataURL('image/jpeg',0.93),'JPEG',margin,headerH+margin,contentW,slHmm);
+    }
+
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(160,110,70);
+    pdf.text('stopoverapp.vercel.app',pageW/2,pageH-2,{align:'center'});
+
+    var from=S.from.replace(/[^a-zA-Z0-9]/g,'_');
+    var to=S.to.replace(/[^a-zA-Z0-9]/g,'_');
+    pdf.save('Stopover_'+from+'_to_'+to+'.pdf');
+
+    if(btn){btn.disabled=false;btn.innerHTML='✅ PDF Downloaded!';}
+    setTimeout(function(){if(btn)btn.innerHTML='📄 Export as PDF';},3000);
+  }).catch(function(err){
+    console.error('PDF error:',err);
+    hidden.forEach(function(h){h.el.style.display=h.prev;});
+    results.style.background=origBg;
+    if(btn){btn.disabled=false;btn.innerHTML='❌ Try again';}
+    setTimeout(function(){if(btn)btn.innerHTML='📄 Export as PDF';},2000);
+  });
 }
 </script>
 
