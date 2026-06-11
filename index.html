@@ -1545,10 +1545,11 @@ function showResults(data){
       '</div>'+
     '</div>';
 
-    // Footer - only show for stopovers, not start/end
-    if(stop.type==='stopover'){
+    // Footer — show for all stop types that have activities with cost
+    if(stop.totalCostPerPerson>0||stop.type==='stopover'){
+      var stayLabel=stop.type==='start'?'Depart from here':stop.type==='end'?'Your destination':(stop.recommendedStay||'2-3 hours');
       html+='<div class="sc-footer">'+
-        '<div class="sc-stay">⏱ '+(stop.recommendedStay||'2-3 hours')+'</div>'+
+        '<div class="sc-stay">'+(stop.type==='start'?'🚀':stop.type==='end'?'🏁':'⏱')+' '+stayLabel+'</div>'+
         '<div class="sc-cost">'+(stop.totalCostPerPerson>0?'~'+_currencySymbol+convertCost(stop.totalCostPerPerson)+'/person':'Free stop')+'</div>'+
       '</div>';
     }
