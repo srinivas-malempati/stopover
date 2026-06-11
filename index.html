@@ -441,30 +441,30 @@ function recalcSummary(){
   var activeStops=0;
   var totalCost=0;
   _stopsData.forEach(function(stop,i){
-    if(_skipped[i]) return; // skip entirely if skipped
-    // Count stopovers + destination (end) in stop count
-    if(stop.type==='stopover'){
-      activeStops++;
-      totalCost+=Math.min(stop.totalCostPerPerson||0, 60000);
+    var skipped=!!_skipped[i];
+    if(stop.type==='start'){
+      // Start city: count it, add its activity costs
+      if(!skipped){
+        activeStops++;
+        totalCost+=Math.min(stop.totalCostPerPerson||0,60000);
+      }
+    } else if(stop.type==='stopover'){
+      if(!skipped){
+        activeStops++;
+        totalCost+=Math.min(stop.totalCostPerPerson||0,60000);
+      }
     } else if(stop.type==='end'){
-      // Always count destination — user always arrives there
-      // Only add cost if destination has activities
-      if(stop.totalCostPerPerson>0){
-        totalCost+=Math.min(stop.totalCostPerPerson||0, 60000);
+      // Destination always counts — user always arrives
+      if(!skipped){
+        activeStops++;
+        totalCost+=Math.min(stop.totalCostPerPerson||0,60000);
       }
     }
-    // start type: never counted in stops or cost (user departs from there)
   });
-  // Stops count = stopovers + 1 (destination always counts)
-  var endStop=_stopsData.find(function(s){return s.type==='end';});
-  var endIdx=_stopsData.indexOf(endStop);
-  var destSkipped=endIdx>=0&&_skipped[endIdx];
-  var displayStops=activeStops+(destSkipped?0:1);
-
   var sumStops=document.getElementById('sum-stops');
   var sumCost=document.getElementById('sum-cost');
-  if(sumStops) sumStops.textContent=displayStops;
-  if(sumCost) sumCost.textContent= totalCost>0?('~'+_currencySymbol+convertCost(totalCost)):'~'+_currencySymbol+'0';
+  if(sumStops) sumStops.textContent=activeStops;
+  if(sumCost) sumCost.textContent='~'+_currencySymbol+convertCost(totalCost);
 }
 
 function recalcDriveConnectors(){
@@ -494,7 +494,7 @@ function recalcDriveConnectors(){
       var hrs=Math.floor(totalMins/60);
       var mins=totalMins%60;
       var timeStr=hrs>0?(hrs+'h '+(mins>0?mins+'m':'')):(mins+'m');
-      var milesStr=totalMiles>0?(' · '+Math.round(totalMiles)+' mi'):'';
+      var milesStr=totalMiles>0?(' · '+Math.round(totalMiles)+(_isMetric?' km':' mi')):'';
       pill.textContent='🚗 '+timeStr+milesStr;
     }
   });
@@ -617,12 +617,17 @@ function getCurrency(stops){
 }
 
 function isMetric(stops){
+  var imperial=0,metric=0;
   for(var i=0;i<stops.length;i++){
     var c=(stops[i].country||'').trim();
-    if(c) return IMPERIAL_COUNTRIES.indexOf(c)===-1;
+    if(!c) continue;
+    if(IMPERIAL_COUNTRIES.indexOf(c)!==-1) imperial++;
+    else metric++;
   }
-  // Fallback: check destination city
-  return !S.to.match(/Atlanta|Miami|New York|Los Angeles|Chicago|San Francisco|Boston|Seattle|Dallas|Houston|Denver|Las Vegas|Orlando|Washington|Nashville|Austin|Portland|Minneapolis|Phoenix|San Diego|Philadelphia|New Orleans|Tampa|Detroit|Sacramento|Kansas City|Pittsburgh|Honolulu|Anchorage|St Louis|Salt Lake City|Boise|Richmond|Savannah|Charleston|Raleigh|Charlotte|Memphis|Baltimore|Louisville|Milwaukee|Albuquerque|Tucson|Cincinnati|San Antonio|London|Edinburgh|Manchester|Birmingham|Glasgow|Liverpool|Cardiff/);
+  if(imperial>0||metric>0) return metric>=imperial;
+  // Fallback: both cities must be US for imperial
+  var US_CITIES=/^(Atlanta|Miami|New York|Los Angeles|Chicago|San Francisco|Boston|Seattle|Dallas|Houston|Denver|Las Vegas|Orlando|Washington|Nashville|Austin|Portland|Minneapolis|Phoenix|San Diego|Philadelphia|New Orleans|Tampa|Detroit|Sacramento|Kansas City|Pittsburgh|Honolulu|Anchorage|St\.? Louis|Salt Lake City|Boise|Richmond|Savannah|Charleston|Raleigh|Charlotte|Memphis|Baltimore|Louisville|Milwaukee|Albuquerque|Tucson|Cincinnati|San Antonio|Columbus|Indianapolis|Jacksonville|Fort Worth|El Paso|Oklahoma City|Omaha|Tulsa|Colorado Springs|Reno|Baton Rouge|Irvine|Chesapeake|Irving|Scottsdale|Fremont|Gilbert|San Bernardino|Birmingham|Rochester)/i;
+  return !(US_CITIES.test(S.from.trim())&&US_CITIES.test(S.to.trim()));
 }
 
 function fmtCost(amount, symbol){
@@ -779,7 +784,8 @@ function cleanCity(city){
 }
 
 function getCityKey(city){
-  return cleanCity(city);
+  var expanded=expandAlias(city)||city;
+  return cleanCity(expanded);
 }
 
 function estimateDays(fromCity, toCity){
@@ -793,13 +799,13 @@ function estimateDays(fromCity, toCity){
     // Same country likely shorter
     return 3; // safe default for unknown routes
   }
-  if(dist < 150) return 1;
-  if(dist < 400) return 1;
-  if(dist < 700) return 2;
-  if(dist < 1100) return 3;
-  if(dist < 1600) return 5;
-  if(dist < 2300) return 7;
-  if(dist < 3000) return 10;
+  if(dist < 150)  return 1;
+  if(dist < 350)  return 2;
+  if(dist < 600)  return 3;
+  if(dist < 900)  return 5;
+  if(dist < 1400) return 7;
+  if(dist < 2200) return 10;
+  if(dist < 3000) return 12;
   return 14;
 }
 
@@ -1013,16 +1019,31 @@ function setSug(iid,sid,city){
 }
 
 function onFrom(){
-  // Never auto-expand while typing — just search and update state
   var raw=document.getElementById('from-inp').value;
-  S.from=raw.trim();
-  showSug('from-inp','from-sug',raw.trim());
+  var trimmed=raw.trim();
+  var expanded=expandAlias(trimmed);
+  if(expanded!==trimmed){
+    document.getElementById('from-inp').value=expanded;
+    S.from=expanded;
+    showSug('from-inp','from-sug',expanded);
+  } else {
+    S.from=trimmed;
+    showSug('from-inp','from-sug',trimmed);
+  }
   checkForm();
 }
 function onTo(){
   var raw=document.getElementById('to-inp').value;
-  S.to=raw.trim();
-  showSug('to-inp','to-sug',raw.trim());
+  var trimmed=raw.trim();
+  var expanded=expandAlias(trimmed);
+  if(expanded!==trimmed){
+    document.getElementById('to-inp').value=expanded;
+    S.to=expanded;
+    showSug('to-inp','to-sug',expanded);
+  } else {
+    S.to=trimmed;
+    showSug('to-inp','to-sug',trimmed);
+  }
   checkForm();
 }
 function onFromFocus(){
@@ -1074,8 +1095,10 @@ function checkForm(){
     btn.style.background='linear-gradient(135deg,var(--sun),var(--amber))';
     btn.style.color='#ffffff';
     btn.style.cursor='pointer';
-    // Auto-suggest ideal days based on route
-    var ideal=suggestDays(f,t);
+    // Expand aliases before suggesting days (NYC→New York etc)
+    var fExp=expandAlias(f)||f;
+    var tExp=expandAlias(t)||t;
+    var ideal=suggestDays(fExp,tExp);
     updateDays(ideal);
   } else {
     btn.disabled=true;
@@ -1327,17 +1350,18 @@ function showResults(data){
   // Recalculate totalCost from actual activity costs (don't trust AI's totalCostPerPerson)
   var totalCost=0;
   stops.forEach(function(stop){
-    // Calculate cost for ALL stop types — start, end, and stopover
+    // Calculate activity cost for ALL types (start, stopover, end)
     var stopCost=0;
     if(stop.activities&&stop.activities.length){
       stop.activities.forEach(function(a){ stopCost+=Math.min(a.cost||0, 50000); });
     }
+    // Add overnight stay cost for stopovers
     if(stop.type==='stopover'&&stop.overnightStop&&stop.suggestedStay&&stop.suggestedStay.pricePerNight){
-      stopCost+=Math.min(stop.suggestedStay.pricePerNight||0, 5000);
+      stopCost+=Math.min(stop.suggestedStay.pricePerNight||0,5000);
     }
-    stopCost=Math.min(stopCost, 60000);
+    stopCost=Math.min(stopCost,60000);
     stop.totalCostPerPerson=stopCost;
-    // Only add stopover + end costs to total (start city user is already there)
+    // Add to trip total: stopover + end (destination). Not start (user already there).
     if(stop.type==='stopover'||stop.type==='end'){
       totalCost+=stopCost;
     }
