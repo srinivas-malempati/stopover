@@ -248,15 +248,6 @@ html{overflow-x:hidden;}
 .wf-day span{display:block;font-size:9px;color:#075985;font-weight:700;}
 .wf-day i{display:block;font-size:13px;font-style:normal;}
 .wf-day b{display:block;font-size:10px;font-weight:800;color:#0c4a6e;}
-
-/* ── PDF EXPORT BUTTON ── */
-.export-btn{width:100%;background:var(–bg2);border:1.5px solid var(–border2);color:var(–text2);border-radius:var(–r);padding:12px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(–sans);transition:all 0.2s;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:6px;}
-.export-btn:hover{border-color:var(–sky);color:var(–sky);}
-.export-btn:disabled{opacity:0.5;cursor:not-allowed;}
-
-/* ── DISABLE PULL-TO-REFRESH ── */
-html{overscroll-behavior-y:none;}
-body{overscroll-behavior-y:none;}
 </style>
 
 </head>
@@ -773,7 +764,8 @@ function cleanCity(city){
 }
 
 function getCityKey(city){
-  return cleanCity(city);
+  var expanded=expandAlias(city)||city;
+  return cleanCity(expanded);
 }
 
 function estimateDays(fromCity, toCity){
@@ -787,13 +779,13 @@ function estimateDays(fromCity, toCity){
     // Same country likely shorter
     return 3; // safe default for unknown routes
   }
-  if(dist < 150) return 1;
-  if(dist < 400) return 1;
-  if(dist < 700) return 2;
-  if(dist < 1100) return 3;
-  if(dist < 1600) return 5;
-  if(dist < 2300) return 7;
-  if(dist < 3000) return 10;
+  if(dist < 150)  return 1;
+  if(dist < 350)  return 2;
+  if(dist < 600)  return 3;
+  if(dist < 900)  return 5;
+  if(dist < 1400) return 7;
+  if(dist < 2200) return 10;
+  if(dist < 3000) return 12;
   return 14;
 }
 
@@ -1007,16 +999,31 @@ function setSug(iid,sid,city){
 }
 
 function onFrom(){
-  // Never auto-expand while typing — just search and update state
   var raw=document.getElementById('from-inp').value;
-  S.from=raw.trim();
-  showSug('from-inp','from-sug',raw.trim());
+  var trimmed=raw.trim();
+  var expanded=expandAlias(trimmed);
+  if(expanded!==trimmed){
+    document.getElementById('from-inp').value=expanded;
+    S.from=expanded;
+    showSug('from-inp','from-sug',expanded);
+  } else {
+    S.from=trimmed;
+    showSug('from-inp','from-sug',trimmed);
+  }
   checkForm();
 }
 function onTo(){
   var raw=document.getElementById('to-inp').value;
-  S.to=raw.trim();
-  showSug('to-inp','to-sug',raw.trim());
+  var trimmed=raw.trim();
+  var expanded=expandAlias(trimmed);
+  if(expanded!==trimmed){
+    document.getElementById('to-inp').value=expanded;
+    S.to=expanded;
+    showSug('to-inp','to-sug',expanded);
+  } else {
+    S.to=trimmed;
+    showSug('to-inp','to-sug',trimmed);
+  }
   checkForm();
 }
 function onFromFocus(){
@@ -1068,8 +1075,10 @@ function checkForm(){
     btn.style.background='linear-gradient(135deg,var(--sun),var(--amber))';
     btn.style.color='#ffffff';
     btn.style.cursor='pointer';
-    // Auto-suggest ideal days based on route
-    var ideal=suggestDays(f,t);
+    // Expand aliases before suggesting days
+    var fExp=expandAlias(f)||f;
+    var tExp=expandAlias(t)||t;
+    var ideal=suggestDays(fExp,tExp);
     updateDays(ideal);
   } else {
     btn.disabled=true;
@@ -1239,7 +1248,7 @@ function go(){
     (S.parking?',"parkingTip":"X"':'')+'}],'+
     '"insiderTip":"X","bestFood":"X","bestStartTime":"X"'+(S.days>1?',"overnightStop":false,"suggestedStay":{"type":"Hotel","name":"X","pricePerNight":0,"bookingTip":"X"}':'')+
     '}]}\n'+
-    'Include '+S.from+' as start (with activities), '+S.to+' as end (WITH FULL ACTIVITIES — treat destination same as a stopover, minimum 6 activities), '+numStops+' middle stopovers.\n'+
+    'Include '+S.from+' as start, '+S.to+' as end, '+numStops+' middle stopovers.\n'+
     'IMPORTANT: Every stop needs many activities. LA/SF/NYC/Chicago/London/Tokyo/Paris/Sydney=8 activities minimum. Medium cities=6. Small towns=4. Include famous landmarks AND vibe activities. Max 6 words per description.\n'+
     'Each activity: name, emoji, cost ('+destCurrency+', 0=free), duration, description'+(S.gems?', hiddenGem(bool)':'')+
     (S.parking?', parkingTip':'')+'.\n'+
@@ -1249,7 +1258,7 @@ function go(){
   var _fetchOptions={
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({prompt:prompt,max_tokens:Math.min(8000,4000+S.days*300+(S.parking?800:0)+(S.gems?400:0))})
+    body:JSON.stringify({prompt:prompt,max_tokens:Math.min(5000,2500+S.days*200+(S.parking?800:0)+(S.gems?400:0))})
   };
 
   function doFetch(attemptsLeft){
@@ -1287,47 +1296,24 @@ function go(){
     if(!txt){console.error('Empty response');showErr();return;}
     try{
       var clean=txt.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim();
-      var s=clean.indexOf('{');
-      if(s===-1){console.error('No JSON found');showErr();return;}
-      var parsed=null;
-      // Attempt 1: direct parse up to last closing brace
-      try{
-        var e=clean.lastIndexOf('}');
-        parsed=JSON.parse(clean.substring(s,e+1));
-      }catch(ex1){
-        // Attempt 2: repair truncated JSON by closing open brackets/braces
-        console.warn('Direct parse failed, attempting repair:',ex1.message);
-        try{
-          var raw=clean.substring(s);
-          var depth=0,arrDepth=0,inStr=false,esc=false;
-          for(var ci=0;ci<raw.length;ci++){
-            var ch=raw[ci];
-            if(esc){esc=false;continue;}
-            if(ch==='\\'){esc=true;continue;}
-            if(ch==='"'){inStr=!inStr;continue;}
-            if(inStr) continue;
-            if(ch==='{')depth++;else if(ch==='}')depth--;
-            else if(ch==='[')arrDepth++;else if(ch===']')arrDepth--;
+      var s=clean.indexOf('{');var e=clean.lastIndexOf('}');
+      if(s!==-1&&e!==-1){
+        var parsed=JSON.parse(clean.substring(s,e+1));
+        if(parsed&&parsed.stops&&parsed.stops.length>0){
+          try{
+            showResults(parsed);
+          }catch(re){
+            showErr('Render error: '+re.message);
           }
-          var repaired=raw.trimEnd().replace(/,\s*$/,'');
-          for(var ai=0;ai<arrDepth;ai++) repaired+=']';
-          for(var oi=0;oi<depth;oi++) repaired+='}';
-          parsed=JSON.parse(repaired);
-          console.log('Repair succeeded, stops:',parsed.stops?parsed.stops.length:0);
-        }catch(ex2){
-          console.error('Repair failed:',ex2.message);
-          showErr();
-          return;
+        } else {
+          showErr('No stops found');
         }
+      } else {
+        console.error('No JSON found in:',txt.substring(0,200));
+        showErr();
       }
-      if(parsed&&parsed.stops&&parsed.stops.length>0){
-        parsed.stops=parsed.stops.filter(function(st){return st&&st.name;});
-        if(parsed.stops.length>0){
-          try{showResults(parsed);}catch(re){showErr();}
-        } else {showErr();}
-      } else {showErr();}
     } catch(ex){
-      console.error('Parse error:',ex);
+      console.error('JSON parse error:',ex,'text:',txt.substring(0,200));
       showErr();
     }
   })
@@ -1545,7 +1531,6 @@ function showResults(data){
       '<div class="sum-item"><span class="sum-n">'+(data.bestSeason||'Year round')+'</span><span class="sum-l">Best time</span></div>'+
     '</div>'+
     '<button class="share-btn" onclick="share()">📤 Share this route</button>'+
-    '<button class="export-btn" id="export-btn" onclick="exportPDF()">📄 Export as PDF</button>'+
     '<button class="back-btn" onclick="reset()">← Plan another route</button>'+
   '</div>';
 
@@ -1644,163 +1629,6 @@ function reset(){
   var ls1=document.getElementById('ls1');
   if(ls1) ls1.classList.add('active');
   window.scrollTo(0,0);
-}
-</script>
-
-<!-- PDF Export -->
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
-<script>
-function exportPDF(){
-  var btn=document.getElementById('export-btn');
-  if(btn){btn.disabled=true;btn.innerHTML='⏳ Generating PDF…';}
-
-  var hideSelectors=['.skip-btn','.swap-btn','.hdr-tag','#export-btn','.share-btn','.back-btn','.weather-extra'];
-  var hidden=[];
-  hideSelectors.forEach(function(sel){
-    document.querySelectorAll(sel).forEach(function(el){
-      if(el.style.display!=='none'){hidden.push({el:el,prev:el.style.display});el.style.display='none';}
-    });
-  });
-
-  var results=document.getElementById('results');
-  var origBg=results.style.background;
-  results.style.background='#fff8f0';
-
-  // Collect break-safe y positions (in DOM px, relative to results top)
-  // BEFORE html2canvas — use getBoundingClientRect
-  var scrollY=window.scrollY;
-  var resultsTop=results.getBoundingClientRect().top+scrollY;
-
-  // Safe break = TOP of stop-card or drive-connector (never cut into these)
-  // We'll break just ABOVE them — meaning the previous content ends there
-  var breakYs=[];
-  results.querySelectorAll('.stop-card,.drive-connector').forEach(function(el){
-    var top=el.getBoundingClientRect().top+scrollY-resultsTop;
-    if(top>10) breakYs.push(top);
-  });
-  // Also add bottom of each .act as a fine-grained option
-  results.querySelectorAll('.act,.stay-card').forEach(function(el){
-    var bot=el.getBoundingClientRect().bottom+scrollY-resultsTop;
-    if(bot>10) breakYs.push(bot);
-  });
-  breakYs.sort(function(a,b){return a-b;});
-
-  var totalDOMHeight=results.scrollHeight;
-
-  // Capture entire results div as one canvas
-  html2canvas(results,{
-    scale:2,
-    useCORS:true,
-    backgroundColor:'#fff8f0',
-    logging:false,
-    width:results.scrollWidth,
-    height:totalDOMHeight,
-    windowWidth:results.scrollWidth,
-    windowHeight:totalDOMHeight,
-    scrollX:0,
-    scrollY:-scrollY
-  }).then(function(canvas){
-    hidden.forEach(function(h){h.el.style.display=h.prev;});
-    results.style.background=origBg;
-
-    var pdf=new jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-    var pageW=pdf.internal.pageSize.getWidth();
-    var pageH=pdf.internal.pageSize.getHeight();
-    var margin=10;
-    var headerH=9;
-    var footerH=7;
-    var contentW=pageW-(margin*2);
-
-    // Key ratio: canvas px per DOM px = scale factor (2)
-    // Key ratio: mm per canvas px = contentW / canvas.width
-    var canvasScale=2; // html2canvas scale
-    var mmPerCanvasPx=contentW/canvas.width;
-    var pageContentMm=pageH-headerH-margin-footerH;
-    var pageContentPx=pageContentMm/mmPerCanvasPx; // how many canvas px fit per page
-
-    // Build page slices using safe break points
-    var slices=[];
-    var startPx=0;
-    var totalPx=canvas.height;
-
-    while(startPx<totalPx){
-      var idealEndPx=startPx+pageContentPx;
-      if(idealEndPx>=totalPx){
-        slices.push({s:startPx,e:totalPx});
-        break;
-      }
-      // Find the best break point:
-      // Among all breakYs (in DOM px), convert to canvas px and find the one
-      // closest to idealEndPx WITHOUT exceeding it, and not too close to startPx
-      var minPx=startPx+(pageContentPx*0.3); // must use at least 30% of page
-      var bestPx=null;
-      for(var bi=0;bi<breakYs.length;bi++){
-        var bCanvasPx=breakYs[bi]*canvasScale;
-        if(bCanvasPx>minPx && bCanvasPx<=idealEndPx){
-          bestPx=bCanvasPx; // keep going — we want the LAST one before idealEndPx
-        }
-      }
-      if(bestPx===null) bestPx=idealEndPx; // no safe break found, cut at ideal
-      slices.push({s:startPx,e:bestPx});
-      startPx=bestPx;
-    }
-
-    var totalPages=slices.length;
-
-    function drawHeader(p){
-      pdf.setFillColor(255,124,42);
-      pdf.rect(0,0,pageW,headerH,'F');
-      pdf.setTextColor(255,255,255);
-      pdf.setFontSize(8);
-      pdf.setFont('helvetica','bold');
-      pdf.text('STOPOVER  '+S.from.toUpperCase()+' to '+S.to.toUpperCase(),margin,6.2);
-      pdf.text('Page '+p+' of '+totalPages,pageW-margin,6.2,{align:'right'});
-      pdf.setTextColor(0,0,0);
-    }
-
-    for(var p=0;p<slices.length;p++){
-      if(p>0) pdf.addPage();
-      drawHeader(p+1);
-
-      var sl=slices[p];
-      var slHpx=Math.ceil(sl.e-sl.s);
-      if(slHpx<=0) continue;
-
-      // Draw this slice onto a temp canvas
-      var tmp=document.createElement('canvas');
-      tmp.width=canvas.width;
-      tmp.height=slHpx;
-      var ctx=tmp.getContext('2d');
-      ctx.fillStyle='#fff8f0';
-      ctx.fillRect(0,0,tmp.width,tmp.height);
-      ctx.drawImage(canvas,0,-sl.s);
-
-      var slHmm=slHpx*mmPerCanvasPx;
-      pdf.addImage(tmp.toDataURL('image/jpeg',0.93),'JPEG',margin,headerH+margin,contentW,slHmm);
-    }
-
-    // Footer on last page
-    pdf.setFontSize(7.5);
-    pdf.setTextColor(160,110,70);
-    pdf.text('stopoverapp.vercel.app',pageW/2,pageH-2,{align:'center'});
-
-    var from=S.from.replace(/[^a-zA-Z0-9]/g,'_');
-    var to=S.to.replace(/[^a-zA-Z0-9]/g,'_');
-    pdf.save('Stopover_'+from+'_to_'+to+'.pdf');
-
-    if(btn){btn.disabled=false;btn.innerHTML='✅ PDF Downloaded!';}
-    setTimeout(function(){if(btn)btn.innerHTML='📄 Export as PDF';},3000);
-  }).catch(function(err){
-    console.error('PDF error:',err);
-    hidden.forEach(function(h){h.el.style.display=h.prev;});
-    results.style.background=origBg;
-    if(btn){btn.disabled=false;btn.innerHTML='❌ Try again';}
-    setTimeout(function(){if(btn)btn.innerHTML='📄 Export as PDF';},2000);
-  });
 }
 </script>
 
